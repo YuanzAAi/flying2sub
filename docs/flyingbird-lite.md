@@ -44,6 +44,16 @@ wrangler secret put FB_PASSWORD
 wrangler secret put ACCESS_TOKEN
 ```
 
+`FB_EMAIL`、`FB_PASSWORD`、`ACCESS_TOKEN` 是 Worker 变量名，命令中保持原样。运行命令后，再按提示输入实际邮箱、密码或访问 token。
+
+只切换上游账号时，保持 `ACCESS_TOKEN` 不变，只更新：
+
+```powershell
+wrangler secret put FB_EMAIL
+wrangler secret put FB_PASSWORD
+```
+
+这样 Clash Verge 里的订阅链接保持不变。需要多个账号同时在线时，建议使用多个 Worker 名称和多个子域名分别部署，而不是让同一个 URL 在多个账号之间切换。
 
 ## 部署
 

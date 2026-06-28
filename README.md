@@ -140,6 +140,44 @@ https://flyingbird.yuangod.cc.cd/flyingbird?token=<ACCESS_TOKEN>
 https://flyingbird-sub.yuanzaai.workers.dev/flyingbird?token=<ACCESS_TOKEN>
 ```
 
+## 更换账号但保持订阅链接不变
+
+订阅 URL 是否变化取决于 `ACCESS_TOKEN`。只要不修改 `ACCESS_TOKEN`，Clash Verge 里的订阅链接就不会变。
+
+更换 FlyingBird Lite 账号、邮箱或密码时，只更新这两个 secrets：
+
+```bash
+wrangler secret put FB_EMAIL
+wrangler secret put FB_PASSWORD
+```
+
+命令里的 `FB_EMAIL` 和 `FB_PASSWORD` 仍然保持不变。运行后输入新的登录邮箱和密码即可。
+
+如果希望订阅链接保持不变，跳过 `ACCESS_TOKEN`。只有计划更换公开订阅链接时才重新设置：
+
+```bash
+wrangler secret put ACCESS_TOKEN
+```
+
+更新账号后可以直接验证：
+
+```bash
+curl https://sub.example.com/health
+TOKEN="$(cat access-token.txt)"
+curl -L "https://sub.example.com/flyingbird?token=${TOKEN}" | head
+```
+
+如果短时间内仍然像是旧账号，可以重新部署一次，让 Worker 运行新版本：
+
+```bash
+wrangler deploy
+```
+
+### 多账号建议
+
+一个 Worker 建议只对应一个当前账号。若需要多个账号同时在线，建议为每个账号部署独立 Worker，并使用不同的 Worker 名称、子域名和 secrets。
+
+这样每个 Clash Verge 订阅链接都能保持稳定，不会互相覆盖。
 
 ## 配置说明
 
