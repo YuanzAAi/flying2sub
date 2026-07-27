@@ -101,6 +101,23 @@ async function getSubscribeInfo(env, authData) {
   return data.data;
 }
 
+function safeHeaderValue(value, maxLength = 2048) {
+  if (!value || value.length > maxLength || /[\r\n]/.test(value)) return null;
+  return value;
+}
+
+function safeProfileWebPageUrl(value) {
+  const safe = safeHeaderValue(value);
+  if (!safe) return null;
+  try {
+    const url = new URL(safe);
+    if (url.protocol !== "https:" || url.searchParams.has("token")) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 async function getSubscriptionUrl(env) {
   let authData = getCachedAuth() || (await login(env));
   try {
@@ -114,14 +131,10 @@ async function getSubscriptionUrl(env) {
 }
 
 function subscriptionUrlFromInfo(env, info) {
-  if (info.token) {
-    const url = new URL(apiUrl(env, "/client/subscribe"));
-    url.searchParams.set("token", info.token);
-    return url.toString();
-  }
-  const url = info.subscription_url || info.subscribe_url;
-  if (!url) throw new Error("getSubscribe response missing subscription token/url");
-  return String(url);
+  if (!info?.token) throw new Error("getSubscribe response missing subscription token");
+  const url = new URL(apiUrl(env, "/client/subscribe"));
+  url.searchParams.set("token", info.token);
+  return url.toString();
 }
 
 function b64ToBytes(b64) {
@@ -173,7 +186,13 @@ async function fetchYaml(env, subscriptionUrl) {
   if (contentType.toLowerCase().includes("text/html") || /^\s*<!doctype|^\s*<html|^\s*<script/i.test(text)) {
     throw new Error("subscription returned HTML/WAF page");
   }
-  return looksLikeYaml(text) ? text : await decryptProfile(text, env);
+  const yaml = looksLikeYaml(text) ? text : await decryptProfile(text, env);
+  return {
+    yaml,
+    subscriptionUserinfo: safeHeaderValue(response.headers.get("subscription-userinfo")),
+    profileUpdateInterval: safeHeaderValue(response.headers.get("profile-update-interval")),
+    profileWebPageUrl: safeProfileWebPageUrl(response.headers.get("profile-web-page-url")),
+  };
 }
 
 export default {
@@ -193,13 +212,18 @@ export default {
 
     try {
       const subscriptionUrl = await getSubscriptionUrl(env);
-      const yaml = await fetchYaml(env, subscriptionUrl);
-      return new Response(yaml, {
+      const profile = await fetchYaml(env, subscriptionUrl);
+      const headers = {
+        "content-type": "text/yaml; charset=utf-8",
+        "cache-control": "no-store",
+      };
+      if (profile.subscriptionUserinfo) headers["subscription-userinfo"] = profile.subscriptionUserinfo;
+      if (profile.profileUpdateInterval) headers["profile-update-interval"] = profile.profileUpdateInterval;
+      if (profile.profileWebPageUrl) headers["profile-web-page-url"] = profile.profileWebPageUrl;
+
+      return new Response(profile.yaml, {
         status: 200,
-        headers: {
-          "content-type": "text/yaml; charset=utf-8",
-          "cache-control": "no-store",
-        },
+        headers,
       });
     } catch (error) {
       return json({ ok: false, error: error.message || String(error) }, 502);

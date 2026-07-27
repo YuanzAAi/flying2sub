@@ -236,6 +236,8 @@ proxy-groups:
 rules:
 ```
 
+订阅响应会安全转发上游提供的 `subscription-userinfo`、`profile-update-interval` 和 `profile-web-page-url` header，供 Clash Verge/Clash Meta 显示上传、下载、总流量和到期时间。当前上游已提供 `subscription-userinfo`，Worker 不再从 `/user/getSubscribe` 的字段重复计算，也不会向 YAML 注入额外注释；邮箱、UUID、订阅 token 等字段不会写入 YAML。订阅内容继续通过原有的 `/client/subscribe?token=...` 链路获取，不使用上游可能返回的直链字段。
+
 ## 常见问题
 
 **403 `invalid access token`**
