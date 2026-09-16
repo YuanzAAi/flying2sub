@@ -24,8 +24,10 @@ sequenceDiagram
     W->>FB: GET /user/getSubscribe
     FB-->>W: subscription token
     W->>FB: GET /client/subscribe?token=...
-    FB-->>W: subscription response
-    W->>W: 转换为 Clash YAML
+    FB-->>W: Base64 编码的 AES-GCM 订阅
+    W->>W: 解析 nonce / ciphertext / tag
+    W->>W: SHA-256 派生密钥并执行 AES-256-GCM 解密
+    W->>W: 校验 Clash YAML
     W-->>CV: text/yaml
 ```
 
@@ -142,42 +144,14 @@ https://flyingbird-sub.yuanzaai.workers.dev/flyingbird?token=<ACCESS_TOKEN>
 
 ## 更换账号但保持订阅链接不变
 
-订阅 URL 是否变化取决于 `ACCESS_TOKEN`。只要不修改 `ACCESS_TOKEN`，Clash Verge 里的订阅链接就不会变。
-
-更换 FlyingBird Lite 账号、邮箱或密码时，只更新这两个 secrets：
+保持 `ACCESS_TOKEN` 不变，只更新账号 secrets：
 
 ```bash
 wrangler secret put FB_EMAIL
 wrangler secret put FB_PASSWORD
 ```
 
-命令里的 `FB_EMAIL` 和 `FB_PASSWORD` 仍然保持不变。运行后输入新的登录邮箱和密码即可。
-
-如果希望订阅链接保持不变，跳过 `ACCESS_TOKEN`。只有计划更换公开订阅链接时才重新设置：
-
-```bash
-wrangler secret put ACCESS_TOKEN
-```
-
-更新账号后可以直接验证：
-
-```bash
-curl https://sub.example.com/health
-TOKEN="$(cat access-token.txt)"
-curl -L "https://sub.example.com/flyingbird?token=${TOKEN}" | head
-```
-
-如果短时间内仍然像是旧账号，可以重新部署一次，让 Worker 运行新版本：
-
-```bash
-wrangler deploy
-```
-
-### 多账号建议
-
-一个 Worker 建议只对应一个当前账号。若需要多个账号同时在线，建议为每个账号部署独立 Worker，并使用不同的 Worker 名称、子域名和 secrets。
-
-这样每个 Clash Verge 订阅链接都能保持稳定，不会互相覆盖。
+Clash Verge 中的订阅 URL 会保持不变。多个账号同时使用时，为每个账号部署独立 Worker。
 
 ## 配置说明
 
@@ -186,8 +160,6 @@ wrangler deploy
 ```toml
 [vars]
 API_BASE = "https://fbesa.apiv2.a047.com/api/v1"
-KEY_ASCII = "14f521a32997b257"
-IV_ASCII = "d217125f4b9cc9c8"
 ```
 
 Cloudflare Worker secrets 保存：
@@ -236,7 +208,7 @@ proxy-groups:
 rules:
 ```
 
-订阅响应会安全转发上游提供的 `subscription-userinfo`、`profile-update-interval` 和 `profile-web-page-url` header，供 Clash Verge/Clash Meta 显示上传、下载、总流量和到期时间。当前上游已提供 `subscription-userinfo`，Worker 不再从 `/user/getSubscribe` 的字段重复计算，也不会向 YAML 注入额外注释；邮箱、UUID、订阅 token 等字段不会写入 YAML。订阅内容继续通过原有的 `/client/subscribe?token=...` 链路获取，不使用上游可能返回的直链字段。
+Worker 会透传上游提供的 `subscription-userinfo`、`profile-update-interval` 和 `profile-web-page-url` 响应头，供 Clash 客户端显示流量和到期信息。
 
 ## 常见问题
 
@@ -246,14 +218,6 @@ URL 中的 token 与 Worker secret `ACCESS_TOKEN` 不一致。重新设置：
 
 ```bash
 wrangler secret put ACCESS_TOKEN
-```
-
-**Worker 返回 502**
-
-通常表示 Worker 没有成功刷新或转换订阅数据。查看日志：
-
-```bash
-wrangler tail flyingbird-sub
 ```
 
 **自定义域名访问失败**

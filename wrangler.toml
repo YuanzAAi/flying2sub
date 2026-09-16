@@ -9,5 +9,3 @@ routes = [
 
 [vars]
 API_BASE = "https://fbesa.apiv2.a047.com/api/v1"
-KEY_ASCII = "14f521a32997b257"
-IV_ASCII = "d217125f4b9cc9c8"

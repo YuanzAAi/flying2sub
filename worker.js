@@ -4,7 +4,7 @@ const APP_HEADERS = {
 };
 
 const SUBSCRIPTION_HEADERS = {
-  "User-Agent": "NetFlow/v3.0.3 clash-verge Platform/windows",
+  "User-Agent": "securitynet/v3.1.8 clash-verge Platform/windows",
 };
 
 const YAML_PREFIXES = ["mixed-port:", "port:", "dns:", "proxies:", "proxy-groups:", "rules:"];
@@ -151,24 +151,32 @@ function looksLikeYaml(text) {
   return YAML_PREFIXES.some((prefix) => trimmed.startsWith(prefix)) || /\n\s*(proxies|proxy-groups|rules)\s*:/.test(text);
 }
 
-async function decryptProfile(encryptedText, env) {
-  const key = new TextEncoder().encode(env.KEY_ASCII);
-  const iv = new TextEncoder().encode(env.IV_ASCII);
-  if (key.length !== 16 || iv.length !== 16) {
-    throw new Error("conversion parameters must both be 16 ASCII bytes");
-  }
+async function decryptProfile(encryptedText) {
+  const part1 = [0xff, 0xfa, 0xaa, 0xaf, 0xfe, 0xaa, 0xa0, 0xa8, 0xf5, 0xf4];
+  const part2 = [0x9f, 0xa2, 0xa4, 0xa5, 0x79, 0x77, 0x74, 0xa7, 0x79, 0xa9];
+  const part3 = [0xc3, 0x22, 0x8c, 0xe1, 0x01, 0x61, 0x36, 0xbc, 0xf4, 0x21, 0xd7, 0x32];
+  const secret = new Uint8Array([
+    ...part1.map((value, index) => value ^ ((index - 61) & 0xff) ^ 0x5a),
+    ...part2.map((value, index) => (value - 60 - index) & 0xff),
+    ...part3.map((value, index) => {
+      const transformed = value ^ 0xa7;
+      const shift = (index % 5) + 1;
+      return ((transformed >>> shift) | (transformed << (8 - shift))) & 0xff;
+    }),
+  ]);
+  const keyBytes = await crypto.subtle.digest("SHA-256", secret);
+  const cryptoKey = await crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, ["decrypt"]);
+  const payload = b64ToBytes(encryptedText);
+  if (payload.length < 28) throw new Error("encrypted subscription is too short");
 
-  const cryptoKey = await crypto.subtle.importKey("raw", key, "AES-CBC", false, ["decrypt"]);
-  const plainBuffer = await crypto.subtle.decrypt({ name: "AES-CBC", iv }, cryptoKey, b64ToBytes(encryptedText));
+  const plainBuffer = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: payload.subarray(0, 12), tagLength: 128 },
+    cryptoKey,
+    payload.subarray(12),
+  );
   const plainText = new TextDecoder().decode(plainBuffer);
   if (looksLikeYaml(plainText)) return plainText;
-
-  try {
-    const inner = b64ToBytes(plainText);
-    return new TextDecoder().decode(inner);
-  } catch {
-    return plainText;
-  }
+  throw new Error("decrypted subscription is not YAML");
 }
 
 async function fetchYaml(env, subscriptionUrl) {
@@ -186,7 +194,7 @@ async function fetchYaml(env, subscriptionUrl) {
   if (contentType.toLowerCase().includes("text/html") || /^\s*<!doctype|^\s*<html|^\s*<script/i.test(text)) {
     throw new Error("subscription returned HTML/WAF page");
   }
-  const yaml = looksLikeYaml(text) ? text : await decryptProfile(text, env);
+  const yaml = looksLikeYaml(text) ? text : await decryptProfile(text);
   return {
     yaml,
     subscriptionUserinfo: safeHeaderValue(response.headers.get("subscription-userinfo")),

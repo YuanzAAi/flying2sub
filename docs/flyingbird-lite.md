@@ -79,7 +79,8 @@ flyingbird.yuangod.cc.cd (custom domain)
 3. 使用 `FB_EMAIL` 和 `FB_PASSWORD` 调用 `/passport/auth/login`。
 4. 使用登录返回的 `auth_data` 调用 `/user/getSubscribe`。
 5. 用返回的 token 请求 `/client/subscribe?token=...`。
-6. 使用 `wrangler.toml` 中的转换参数生成 YAML。
-7. 安全转发上游的 `subscription-userinfo`、`profile-update-interval` 和 `profile-web-page-url` header；不从 `getSubscribe` 元数据重复计算，也不向 YAML 添加额外注释。
+6. Base64 解码订阅内容，解析 nonce、ciphertext 和 tag。
+7. SHA-256 派生密钥，使用 AES-256-GCM 解密并校验 YAML。
+8. 转发 `subscription-userinfo`、`profile-update-interval` 和 `profile-web-page-url` 响应头。
 
 如果上游客户端更新后返回格式变化，需要同步更新 Worker 逻辑并重新部署。
