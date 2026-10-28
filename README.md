@@ -11,38 +11,30 @@
 ## 工作原理
 
 ```mermaid
-flowchart LR
-    subgraph REQUEST["1 · 接收与鉴权"]
-        direction TB
-        C["Clash Verge 更新订阅<br/>GET /flyingbird?token=…"]
-        W["Cloudflare Worker<br/>校验 ACCESS_TOKEN"]
-        C --> W
+%%{init: {"sequence": {"diagramMarginX": 8, "diagramMarginY": 8, "actorMargin": 28, "height": 40, "boxMargin": 6, "messageMargin": 18, "mirrorActors": false}}}%%
+sequenceDiagram
+    autonumber
+    participant CV as Clash Verge
+    participant W as Cloudflare Worker
+    participant FB as FlyingBird 服务
+
+    CV->>W: GET /flyingbird<br/>token=ACCESS_TOKEN
+    W->>W: 校验 ACCESS_TOKEN
+    opt JWT 未缓存或临近过期
+        W->>FB: mTLS · POST /v2/auth/token
+        FB-->>W: auth_data（缓存 JWT）
     end
-
-    subgraph UPSTREAM["2 · 上游请求 · mTLS"]
-        direction TB
-        A["优先复用有效 JWT<br/>否则 POST /v2/auth/token"]
-        T["API · 获取订阅 token<br/>GET /v2/feed/access-token<br/>Authorization: auth_data"]
-        S["订阅服务 · 下载节点<br/>GET /v2/feed/download<br/>access_key=订阅 token"]
-        A --> T --> S
+    W->>FB: mTLS · GET /v2/feed/access-token<br/>Authorization: auth_data
+    FB-->>W: 订阅 token
+    W->>FB: mTLS · GET /v2/feed/download<br/>access_key=订阅 token
+    FB-->>W: 订阅内容 + 上游响应头
+    opt 内容为 APXS 加密封装
+        W->>W: 解析封装并校验 APXS 头
+        W->>W: Ed25519 签名校验
+        W->>W: AES-256-GCM 解密<br/>nonce · AAD · tag
     end
-
-    subgraph DECODE["3 · 验签解密与返回"]
-        direction TB
-        V["解析 APXS 封装<br/>Ed25519 签名校验"]
-        D["AES-256-GCM 解密<br/>nonce · AAD · tag"]
-        Y["校验并返回 Clash YAML<br/>透传流量、到期等订阅响应头"]
-        V --> D --> Y
-    end
-
-    REQUEST --> UPSTREAM --> DECODE
-
-    classDef client fill:#eff6ff,stroke:#60a5fa,color:#1e3a8a
-    classDef upstream fill:#f5f3ff,stroke:#a78bfa,color:#4c1d95
-    classDef decode fill:#f0fdf4,stroke:#4ade80,color:#14532d
-    class C,W client
-    class A,T,S upstream
-    class V,D,Y decode
+    W->>W: 校验 Clash YAML
+    W-->>CV: Clash YAML + 流量、到期等响应头
 ```
 
 ## 特性
