@@ -8,4 +8,13 @@ routes = [
 ]
 
 [vars]
-API_BASE = "https://fbesa.apiv2.a047.com/api/v1"
+API_BASE = "https://fbaxapi.apiv2.a047.com/v2"
+SUBSCRIPTION_BASE = "https://fbaxsub.apiv2.a047.com/v2"
+
+[[mtls_certificates]]
+binding = "API_TLS"
+certificate_id = "acd206b9-202c-4905-9404-6e68cb9a79e3"
+
+[[mtls_certificates]]
+binding = "SUBSCRIPTION_TLS"
+certificate_id = "446a29c9-ffea-4318-8acc-4eea1b97a912"

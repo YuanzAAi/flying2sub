@@ -1,10 +1,10 @@
 const APP_HEADERS = {
-  "User-Agent": "Mozilla/5.0 (dart:io) SuperAccelerator",
+  "User-Agent": "ua.net.fbclient.app.apex/v7.2.5",
   Accept: "application/json",
 };
 
 const SUBSCRIPTION_HEADERS = {
-  "User-Agent": "securitynet/v3.1.8 clash-verge Platform/windows",
+  "User-Agent": APP_HEADERS["User-Agent"],
 };
 
 const YAML_PREFIXES = ["mixed-port:", "port:", "dns:", "proxies:", "proxy-groups:", "rules:"];
@@ -44,8 +44,8 @@ function getCachedAuth() {
   return cachedAuth.authData;
 }
 
-async function requestJson(url, init) {
-  const response = await fetch(url, init);
+async function requestJson(env, url, init) {
+  const response = await env.API_TLS.fetch(url, init);
   const text = await response.text();
   let data;
   try {
@@ -67,7 +67,7 @@ async function login(env) {
   form.set("email", env.FB_EMAIL);
   form.set("password", env.FB_PASSWORD);
 
-  const data = await requestJson(apiUrl(env, "/passport/auth/login"), {
+  const data = await requestJson(env, apiUrl(env, "/auth/token"), {
     method: "POST",
     headers: {
       ...APP_HEADERS,
@@ -87,7 +87,7 @@ async function login(env) {
 }
 
 async function getSubscribeInfo(env, authData) {
-  const data = await requestJson(apiUrl(env, "/user/getSubscribe"), {
+  const data = await requestJson(env, apiUrl(env, "/feed/access-token"), {
     method: "GET",
     headers: {
       ...APP_HEADERS,
@@ -132,8 +132,8 @@ async function getSubscriptionUrl(env) {
 
 function subscriptionUrlFromInfo(env, info) {
   if (!info?.token) throw new Error("getSubscribe response missing subscription token");
-  const url = new URL(apiUrl(env, "/client/subscribe"));
-  url.searchParams.set("token", info.token);
+  const url = new URL(`${env.SUBSCRIPTION_BASE.replace(/\/+$/, "")}/feed/download`);
+  url.searchParams.set("access_key", info.token);
   return url.toString();
 }
 
@@ -151,28 +151,40 @@ function looksLikeYaml(text) {
   return YAML_PREFIXES.some((prefix) => trimmed.startsWith(prefix)) || /\n\s*(proxies|proxy-groups|rules)\s*:/.test(text);
 }
 
-async function decryptProfile(encryptedText) {
-  const part1 = [0xff, 0xfa, 0xaa, 0xaf, 0xfe, 0xaa, 0xa0, 0xa8, 0xf5, 0xf4];
-  const part2 = [0x9f, 0xa2, 0xa4, 0xa5, 0x79, 0x77, 0x74, 0xa7, 0x79, 0xa9];
-  const part3 = [0xc3, 0x22, 0x8c, 0xe1, 0x01, 0x61, 0x36, 0xbc, 0xf4, 0x21, 0xd7, 0x32];
-  const secret = new Uint8Array([
-    ...part1.map((value, index) => value ^ ((index - 61) & 0xff) ^ 0x5a),
-    ...part2.map((value, index) => (value - 60 - index) & 0xff),
-    ...part3.map((value, index) => {
-      const transformed = value ^ 0xa7;
-      const shift = (index % 5) + 1;
-      return ((transformed >>> shift) | (transformed << (8 - shift))) & 0xff;
-    }),
-  ]);
-  const keyBytes = await crypto.subtle.digest("SHA-256", secret);
-  const cryptoKey = await crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, ["decrypt"]);
-  const payload = b64ToBytes(encryptedText);
-  if (payload.length < 28) throw new Error("encrypted subscription is too short");
+function prefixedBytes(prefix, data) {
+  const prefixBytes = new TextEncoder().encode(prefix);
+  const result = new Uint8Array(prefixBytes.length + data.length);
+  result.set(prefixBytes);
+  result.set(data, prefixBytes.length);
+  return result;
+}
 
+async function decryptProfile(payload) {
+  if (payload.length < 105) throw new Error("encrypted subscription is too short");
+  const header = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  if (header.getUint32(0) !== 0x41505853 || payload[4] !== 2 || header.getUint32(5) !== 1 || header.getUint32(9) !== 1) {
+    throw new Error("unsupported subscription envelope");
+  }
+  const signedPayload = payload.subarray(0, -64);
+  const verificationKey = await crypto.subtle.importKey(
+    "raw", b64ToBytes("lmzs43izW9GHIOOq+avbwhWh0TG/ldT3kipGkrQ4RiE="), "Ed25519", false, ["verify"],
+  );
+  const validSignature = await crypto.subtle.verify(
+    "Ed25519", verificationKey, payload.subarray(-64), prefixedBytes("apex-sub-sign-v2\0", signedPayload),
+  );
+  if (!validSignature) throw new Error("subscription signature rejected");
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw", b64ToBytes("fCA3jkvhXpLEpDVuqPstNUS/kXewk7yGL5o8Fbh3uSc="), "AES-GCM", false, ["decrypt"],
+  );
   const plainBuffer = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: payload.subarray(0, 12), tagLength: 128 },
+    {
+      name: "AES-GCM",
+      iv: payload.subarray(13, 25),
+      additionalData: prefixedBytes("apex-sub-v2\0", payload.subarray(0, 25)),
+      tagLength: 128,
+    },
     cryptoKey,
-    payload.subarray(12),
+    signedPayload.subarray(25),
   );
   const plainText = new TextDecoder().decode(plainBuffer);
   if (looksLikeYaml(plainText)) return plainText;
@@ -180,12 +192,13 @@ async function decryptProfile(encryptedText) {
 }
 
 async function fetchYaml(env, subscriptionUrl) {
-  const response = await fetch(subscriptionUrl, {
+  const response = await env.SUBSCRIPTION_TLS.fetch(subscriptionUrl, {
     method: "GET",
     headers: SUBSCRIPTION_HEADERS,
     redirect: "follow",
   });
-  const text = await response.text();
+  const payload = new Uint8Array(await response.arrayBuffer());
+  const text = new TextDecoder().decode(payload);
   const contentType = response.headers.get("content-type") || "";
 
   if (!response.ok) {
@@ -194,7 +207,7 @@ async function fetchYaml(env, subscriptionUrl) {
   if (contentType.toLowerCase().includes("text/html") || /^\s*<!doctype|^\s*<html|^\s*<script/i.test(text)) {
     throw new Error("subscription returned HTML/WAF page");
   }
-  const yaml = looksLikeYaml(text) ? text : await decryptProfile(text);
+  const yaml = looksLikeYaml(text) ? text : await decryptProfile(payload);
   return {
     yaml,
     subscriptionUserinfo: safeHeaderValue(response.headers.get("subscription-userinfo")),

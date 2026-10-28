@@ -4,8 +4,8 @@
 
 ```text
 Clash Verge -> flyingbird.yuangod.cc.cd -> Cloudflare Worker
--> FlyingBird 登录 -> getSubscribe -> 远程订阅响应
--> 解码转换 -> Clash YAML
+-> FlyingBird 登录 -> 获取订阅 token -> 远程订阅响应
+-> 签名校验和解密 -> Clash YAML
 ```
 
 本仓库只保留 Cloudflare Worker 版本，不再保留旧的本地运行流程或中间文件。
@@ -57,6 +57,8 @@ wrangler secret put FB_PASSWORD
 
 ## 部署
 
+`wrangler.toml` 中的 `API_TLS` 和 `SUBSCRIPTION_TLS` 分别绑定 API、订阅服务的客户端证书。证书及私钥通过 `wrangler mtls-certificate upload` 上传，配置中只保存返回的证书 ID。
+
 在项目根目录运行：
 
 ```powershell
@@ -76,11 +78,11 @@ flyingbird.yuangod.cc.cd (custom domain)
 
 1. `/health` 返回健康检查 JSON。
 2. `/flyingbird?token=...` 校验 `ACCESS_TOKEN`。
-3. 使用 `FB_EMAIL` 和 `FB_PASSWORD` 调用 `/passport/auth/login`。
-4. 使用登录返回的 `auth_data` 调用 `/user/getSubscribe`。
-5. 用返回的 token 请求 `/client/subscribe?token=...`。
-6. Base64 解码订阅内容，解析 nonce、ciphertext 和 tag。
-7. SHA-256 派生密钥，使用 AES-256-GCM 解密并校验 YAML。
+3. 通过 `API_TLS`，使用 `FB_EMAIL` 和 `FB_PASSWORD` 调用 `/v2/auth/token`。
+4. 使用登录返回的 `auth_data` 调用 `/v2/feed/access-token`。
+5. 通过 `SUBSCRIPTION_TLS`，用返回的 token 请求 `/v2/feed/download?access_key=...`。
+6. 校验 APXS 封装的版本、profile 和 purpose，以及尾部 Ed25519 签名。
+7. 使用 nonce 和 AAD 执行 AES-256-GCM 解密并校验 YAML。
 8. 转发 `subscription-userinfo`、`profile-update-interval` 和 `profile-web-page-url` 响应头。
 
 如果上游客户端更新后返回格式变化，需要同步更新 Worker 逻辑并重新部署。

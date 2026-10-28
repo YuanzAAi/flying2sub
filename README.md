@@ -1,6 +1,6 @@
 # flying2sub
 
-把 FlyingBird Lite 账号转换为 Clash Verge 可直接订阅的远程链接，由 Cloudflare Worker 在线刷新并返回 Clash YAML。
+把 FlyingBird 账号转换为 Clash Verge 可直接订阅的远程链接，由 Cloudflare Worker 在线刷新并返回 Clash YAML。
 
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)](https://developers.cloudflare.com/workers/)
 [![Clash Verge](https://img.shields.io/badge/Client-Clash%20Verge-2D8CFF)](#在-clash-verge-中使用)
@@ -15,20 +15,30 @@ sequenceDiagram
     autonumber
     participant CV as Clash Verge
     participant W as Cloudflare Worker
-    participant FB as FlyingBird Lite API
+    participant API as FlyingBird API
+    participant SUB as FlyingBird 订阅服务
 
     CV->>W: GET /flyingbird?token=ACCESS_TOKEN
-    W->>W: 校验 ACCESS_TOKEN
-    W->>FB: POST /passport/auth/login
-    FB-->>W: auth_data
-    W->>FB: GET /user/getSubscribe
-    FB-->>W: subscription token
-    W->>FB: GET /client/subscribe?token=...
-    FB-->>W: Base64 编码的 AES-GCM 订阅
-    W->>W: 解析 nonce / ciphertext / tag
-    W->>W: SHA-256 派生密钥并执行 AES-256-GCM 解密
+    W->>W: 校验访问 token
+
+    opt 无有效 JWT 缓存
+        W->>API: mTLS · POST /v2/auth/token
+        API-->>W: auth_data（JWT）
+        W->>W: 缓存 JWT 至临近过期
+    end
+    W->>API: mTLS · GET /v2/feed/access-token<br/>Authorization: auth_data
+    API-->>W: 订阅 token
+
+    W->>SUB: mTLS · GET /v2/feed/download?access_key=...
+    SUB-->>W: 订阅内容 + 上游响应头
+
+    opt 内容为 APXS 加密封装
+        W->>W: 校验封装头，解析 nonce / ciphertext / tag / 签名
+        W->>W: Ed25519 签名校验
+        W->>W: AES-256-GCM 解密（含 AAD）
+    end
     W->>W: 校验 Clash YAML
-    W-->>CV: text/yaml
+    W-->>CV: text/yaml + 流量、到期等订阅响应头
 ```
 
 ## 特性
@@ -48,7 +58,7 @@ sequenceDiagram
 - 一个 Cloudflare 账号，用于部署 Worker。
 - Node.js 18+。
 - Wrangler 4+。
-- FlyingBird Lite 账号。
+- FlyingBird 账号及 API、订阅服务对应的客户端证书和私钥（PEM）。
 - 自定义域名（可选）。没有域名也可以先使用 Cloudflare 默认的 `workers.dev` 地址。
 
 安装 Wrangler：
@@ -91,12 +101,23 @@ wrangler secret put ACCESS_TOKEN
 依次填写：
 
 ```text
-FB_EMAIL     -> FlyingBird Lite 登录邮箱
-FB_PASSWORD  -> FlyingBird Lite 登录密码
+FB_EMAIL     -> FlyingBird 登录邮箱
+FB_PASSWORD  -> FlyingBird 登录密码
 ACCESS_TOKEN -> access-token.txt 里的内容
 ```
 
-### 5. 部署 Worker
+### 5. 配置 mTLS 证书
+
+将 API 和订阅服务的客户端证书分别上传到 Cloudflare：
+
+```bash
+wrangler mtls-certificate upload --cert /path/to/api-cert.pem --key /path/to/api-key.pem --name flyingbird-api
+wrangler mtls-certificate upload --cert /path/to/subscription-cert.pem --key /path/to/subscription-key.pem --name flyingbird-subscription
+```
+
+把返回的证书 ID 分别填入 `wrangler.toml` 中 `API_TLS` 和 `SUBSCRIPTION_TLS` 的 `certificate_id`。证书和私钥不要放入仓库。
+
+### 6. 部署 Worker
 
 ```bash
 wrangler deploy
@@ -159,7 +180,8 @@ Clash Verge 中的订阅 URL 会保持不变。多个账号同时使用时，为
 
 ```toml
 [vars]
-API_BASE = "https://fbesa.apiv2.a047.com/api/v1"
+API_BASE = "https://fbaxapi.apiv2.a047.com/v2"
+SUBSCRIPTION_BASE = "https://fbaxsub.apiv2.a047.com/v2"
 ```
 
 Cloudflare Worker secrets 保存：
