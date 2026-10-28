@@ -11,7 +11,7 @@
 ## 工作原理
 
 ```mermaid
-%%{init: {"sequence": {"diagramMarginX": 8, "diagramMarginY": 8, "actorMargin": 28, "height": 40, "boxMargin": 6, "messageMargin": 18, "mirrorActors": false}}}%%
+%%{init: {"sequence": {"diagramMarginX": 8, "diagramMarginY": 8, "actorMargin": 28, "messageMargin": 14, "mirrorActors": false}}}%%
 sequenceDiagram
     autonumber
     participant CV as Clash Verge
@@ -20,21 +20,14 @@ sequenceDiagram
 
     CV->>W: GET /flyingbird<br/>token=ACCESS_TOKEN
     W->>W: 校验 ACCESS_TOKEN
-    opt JWT 未缓存或临近过期
-        W->>FB: mTLS · POST /v2/auth/token
-        FB-->>W: auth_data（缓存 JWT）
-    end
-    W->>FB: mTLS · GET /v2/feed/access-token<br/>Authorization: auth_data
+    W->>FB: mTLS · POST /v2/auth/token<br/>仅在无有效 JWT 缓存时登录
+    FB-->>W: auth_data（缓存 JWT）
+    W->>FB: mTLS · 获取订阅 token<br/>GET /v2/feed/access-token<br/>Authorization: auth_data
     FB-->>W: 订阅 token
     W->>FB: mTLS · GET /v2/feed/download<br/>access_key=订阅 token
-    FB-->>W: 订阅内容 + 上游响应头
-    opt 内容为 APXS 加密封装
-        W->>W: 解析封装并校验 APXS 头
-        W->>W: Ed25519 签名校验
-        W->>W: AES-256-GCM 解密<br/>nonce · AAD · tag
-    end
-    W->>W: 校验 Clash YAML
-    W-->>CV: Clash YAML + 流量、到期等响应头
+    FB-->>W: APXS 封装 + 订阅响应头
+    W->>W: 校验 APXS 头 / Ed25519 签名<br/>AES-256-GCM 解密（nonce / AAD / tag）<br/>校验 Clash YAML
+    W-->>CV: Clash YAML + 订阅响应头<br/>流量 / 到期 / 更新间隔
 ```
 
 ## 特性
