@@ -8,6 +8,8 @@
 
 适合希望把订阅更新交给 Cloudflare Worker 处理、在 Clash Verge 中长期使用同一个订阅 URL 的场景。部署完成后，本地不需要常驻服务，也不需要定期运行脚本。
 
+部署前需准备 FlyingBird 账号，以及 API、订阅服务各自的 mTLS 客户端证书和配套私钥（PEM），仅有账号密码还不够。证书材料可从对应的官方 Windows 客户端安装包中获取：免安装解包后，定位并提取程序内置的两组证书及私钥，导出为 PEM，再按[配置 mTLS 证书](#5-配置-mtls-证书)上传到自己的 Cloudflare 账号。仓库不提供证书或私钥，`wrangler.toml` 中现有的 `certificate_id` 不能跨账号复用，须替换为上传后返回的 ID；Worker 通过 Cloudflare 的出站 mTLS 绑定连接上游，无需额外服务器。
+
 ## 工作原理
 
 ```mermaid
